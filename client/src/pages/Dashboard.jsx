@@ -327,27 +327,26 @@ const RoadmapSection = ({ t, isDark, user }) => {
     );
 };
 // =================================================================================
-//  2. ANALYTICS SECTION
+//  2. ANALYTICS SECTION (FIXED NAMING COLLISION)
 // =================================================================================
 const AnalyticsSection = ({ user, setUser, t, isDark, isGhibli, addXp }) => {
     const [showModal, setShowModal] = useState(false);
     const [semInput, setSemInput] = useState('');
     const [subInput, setSubInput] = useState([{ name: '', mark: '' }]);
     const [expandedSem, setExpandedSem] = useState(null);
-    const [careerAdvice, setCareerAdvice] = useState('');
     const [careerLoading, setCareerLoading] = useState(false);
     const [chatMsg, setChatMsg] = useState('');
     const [chatHistory, setChatHistory] = useState([{ role: 'ai', text: `Hi ${user.name}! I'm ready to help.` }]);
     const [aiData, setAiData] = useState(null);
 
     const stats = useMemo(() => {
-        if (!user.academicHistory.length) return null;
-        const totalGPA = user.academicHistory.reduce((acc, curr) => acc + curr.gpa, 0);
+        if (!user.academicHistory || !user.academicHistory.length) return null;
+        const totalGPA = user.academicHistory.reduce((acc, curr) => acc + Number(curr.gpa || 0), 0);
         const cgpa = (totalGPA / user.academicHistory.length).toFixed(2);
         let trend = 0;
         if (user.academicHistory.length >= 2) {
-            const last = user.academicHistory[user.academicHistory.length - 1].gpa;
-            const prev = user.academicHistory[user.academicHistory.length - 2].gpa;
+            const last = Number(user.academicHistory[user.academicHistory.length - 1].gpa || 0);
+            const prev = Number(user.academicHistory[user.academicHistory.length - 2].gpa || 0);
             trend = (last - prev).toFixed(2);
         }
         return { cgpa, trend };
@@ -361,27 +360,73 @@ const AnalyticsSection = ({ user, setUser, t, isDark, isGhibli, addXp }) => {
     };
 
     const saveMarks = async () => {
-        if (!semInput) return;
-        const validSubjects = subInput.filter(s => s.name.trim() && s.mark !== '');
-        if (validSubjects.length === 0) return alert("Add subjects");
+        if (!semInput) return alert("Please enter a semester.");
+        
+        // 1. Clean inputs safely
+        const validSubjects = subInput
+            .filter(s => s && s.name && s.name.trim() !== '' && s.mark !== '')
+            .map(s => ({ name: s.name.trim(), mark: s.mark })); // Sending marks exactly as typed
+            
+        if (validSubjects.length === 0) return alert("Please add at least one subject and mark.");
 
         let finalSubjects = [...validSubjects];
-        const existingSemester = user.academicHistory.find(h => h.semester == semInput);
+        
+        // 2. Find existing semester (using == to safely match "1" with 1)
+        const existingSemester = (user.academicHistory || []).find(h => h.semester == semInput);
+        
         if (existingSemester) {
-            const subjectMap = new Map();
-            existingSemester.subjects.forEach(s => subjectMap.set(s.name.toLowerCase().trim(), { name: s.name, mark: s.mark }));
-            validSubjects.forEach(s => subjectMap.set(s.name.toLowerCase().trim(), { name: s.name, mark: s.mark }));
-            finalSubjects = Array.from(subjectMap.values());
+            // FIX: Using a plain object {} instead of Map() to avoid the Lucide Icon crash
+            const mergedSubjects = {};
+            
+            // Load existing subjects
+            (existingSemester.subjects || []).forEach(s => {
+                if (s && s.name) {
+                    mergedSubjects[String(s.name).toLowerCase().trim()] = { name: s.name, mark: s.mark };
+                }
+            });
+            
+            // Overwrite with new subjects
+            validSubjects.forEach(s => {
+                mergedSubjects[String(s.name).toLowerCase().trim()] = { name: s.name, mark: s.mark };
+            });
+            
+            finalSubjects = Object.values(mergedSubjects);
         }
 
-        const token = localStorage.getItem('token');
         try {
-            const { data } = await axios.post('http://localhost:5000/api/add-marks',
-                { userId: user._id, semester: semInput, subjects: finalSubjects },
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-            setUser(data); setShowModal(false); addXp(50); setSemInput(''); setSubInput([{ name: '', mark: '' }]);
-        } catch (e) { alert("Error"); }
+            const token = localStorage.getItem('token');
+            
+            // FIX: Add safety fallback for user._id
+            const payload = { 
+                userId: user._id || user.id, 
+                semester: semInput, 
+                subjects: finalSubjects 
+            };
+
+            const { data } = await axios.post('http://localhost:5000/api/add-marks', payload, { 
+                headers: { Authorization: `Bearer ${token}` } 
+            });
+
+            // Extract the user data properly
+            const updatedUser = data.user || data;
+
+            if (updatedUser && (updatedUser._id || updatedUser.id)) {
+                setUser(updatedUser);
+                localStorage.setItem('user', JSON.stringify(updatedUser));
+                
+                // Close modal and reset
+                setShowModal(false); 
+                addXp(50); 
+                setSemInput(''); 
+                setSubInput([{ name: '', mark: '' }]);
+            } else {
+                window.location.reload();
+            }
+
+        } catch (e) { 
+            console.error("Save Marks Error:", e);
+            alert("Backend Error (500). The server crashed. Check your Node.js terminal!");
+        }
     };
 
     const getCareerAnalysis = async () => {
@@ -427,7 +472,7 @@ const AnalyticsSection = ({ user, setUser, t, isDark, isGhibli, addXp }) => {
                     <div className={`p-8 ${t.card} min-h-[350px]`}>
                         <h3 className={`text-xl font-bold mb-6 ${t.text}`}>Trajectory</h3>
                         <ResponsiveContainer width="100%" height={250}>
-                            <AreaChart data={user.academicHistory}>
+                            <AreaChart data={user.academicHistory || []}>
                                 <defs><linearGradient id="colorGpa" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={t.chartFill} stopOpacity={0.4} /><stop offset="95%" stopColor={t.chartFill} stopOpacity={0} /></linearGradient></defs>
                                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? '#334155' : '#f1f5f9'} />
                                 <XAxis dataKey="semester" stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(val) => `S${val}`} axisLine={false} tickLine={false} />
@@ -442,7 +487,7 @@ const AnalyticsSection = ({ user, setUser, t, isDark, isGhibli, addXp }) => {
                     <div className={`h-full ${t.card} flex flex-col overflow-hidden max-h-[600px]`}>
                         <div className={`p-6 border-b ${isDark ? 'border-gray-800' : 'border-gray-100'} flex justify-between items-center`}><h3 className={`font-bold ${t.text}`}>Ledger</h3></div>
                         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-3">
-                            {user.academicHistory.map((sem, i) => (
+                            {(user.academicHistory || []).map((sem, i) => (
                                 <div key={i} className={`rounded-2xl transition-all border ${expandedSem === i ? (isDark ? 'bg-white/5 border-white/20' : 'bg-white border-indigo-200 shadow-md') : (isDark ? 'bg-transparent border-gray-800' : 'bg-slate-50 border-transparent hover:bg-white')}`}>
                                     <div onClick={() => setExpandedSem(expandedSem === i ? null : i)} className="p-4 flex justify-between items-center cursor-pointer">
                                         <div className="flex items-center gap-4"><div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm text-white ${sem.gpa >= 8 ? 'bg-green-500' : 'bg-yellow-500'}`}>{sem.gpa}</div><div><h4 className={`font-bold text-sm ${t.text}`}>Sem {sem.semester}</h4><p className={`text-xs ${t.textSec}`}>{sem.subjects.length} Subjects</p></div></div>
@@ -465,8 +510,8 @@ const AnalyticsSection = ({ user, setUser, t, isDark, isGhibli, addXp }) => {
                         </div>
                         {!aiData ? (<div className={`text-center py-20 rounded-2xl border-2 border-dashed ${isDark ? 'border-gray-800' : 'border-gray-200'}`}><BrainCircuit size={48} className={`mx-auto mb-4 opacity-20 ${t.textSec}`} /><p className={`text-sm ${t.textSec}`}>Click analyze for insights.</p></div>) : (
                             <div className="space-y-8 animate-fadeIn">
-                                <div className={`p-4 rounded-2xl ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}><h4 className={`font-bold text-sm mb-3 text-yellow-500`}>Study Doctor</h4><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{aiData.tips.map((tip, i) => (<div key={i} className="text-xs leading-relaxed opacity-90">• {tip}</div>))}</div></div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{aiData.careers.map((card, i) => (<div key={i} className={`p-5 rounded-2xl border transition-all hover:-translate-y-1 ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-100 hover:bg-white'}`}><h4 className={`font-bold text-lg mb-1 ${t.text}`}>{card.role}</h4><div className={`text-xs font-bold mb-3 text-green-500`}>{card.package}</div><p className={`text-xs opacity-70 mb-4 ${t.textSec}`}>{card.description}</p><div className="flex flex-wrap gap-2">{card.skills?.map((s, j) => (<span key={j} className={`px-2 py-1 rounded text-[10px] font-bold ${isDark ? 'bg-white/10' : 'bg-white border'}`}>{s}</span>))}</div></div>))}</div>
+                                <div className={`p-4 rounded-2xl ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}><h4 className={`font-bold text-sm mb-3 text-yellow-500`}>Study Doctor</h4><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{(aiData.tips || []).map((tip, i) => (<div key={i} className="text-xs leading-relaxed opacity-90">• {tip}</div>))}</div></div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{(aiData.careers || []).map((card, i) => (<div key={i} className={`p-5 rounded-2xl border transition-all hover:-translate-y-1 ${isDark ? 'bg-white/5 border-white/10' : 'bg-slate-50 border-slate-100 hover:bg-white'}`}><h4 className={`font-bold text-lg mb-1 ${t.text}`}>{card.role}</h4><div className={`text-xs font-bold mb-3 text-green-500`}>{card.package}</div><p className={`text-xs opacity-70 mb-4 ${t.textSec}`}>{card.description}</p><div className="flex flex-wrap gap-2">{(card.skills || []).map((s, j) => (<span key={j} className={`px-2 py-1 rounded text-[10px] font-bold ${isDark ? 'bg-white/10' : 'bg-white border'}`}>{s}</span>))}</div></div>))}</div>
                             </div>
                         )}
                     </div>
@@ -856,6 +901,32 @@ const FeedSection = ({ t, isDark, user }) => {
     };
 
     // --- 1. FETCH DATA (PARALLEL CALLS) ---
+
+    //post ude effect 
+    useEffect(() => {
+
+ const fetchTips = async () => {
+
+  try {
+
+   const res = await axios.get("http://localhost:5000/api/tips");
+
+   setPosts(res.data);
+
+  }
+  catch (err) {
+
+   console.error("Failed to load tips", err);
+
+  }
+
+ };
+
+ fetchTips();
+
+}, []);
+
+
     useEffect(() => {
         const fetchData = async () => {
             setLoadingFeed(true);
@@ -910,8 +981,52 @@ const FeedSection = ({ t, isDark, user }) => {
         } catch (e) { alert("Report generation failed."); }
         setLoadingReport(false);
     };
-    const handlePost = () => { if (!newPost.trim()) return; setPosts([{ id: Date.now(), author: user.name, role: "Student", content: newPost, likes: 0, liked: false }, ...posts]); setNewPost(""); };
-    const toggleLike = (id) => setPosts(posts.map(p => p.id === id ? { ...p, likes: p.liked ? p.likes - 1 : p.likes + 1, liked: !p.liked } : p));
+    const handlePost = async () => {
+
+ if (!newPost.trim()) return;
+
+ try {
+
+  const res = await axios.post("http://localhost:5000/api/tips", {
+
+   author: user.name,
+   course: user.course,
+   content: newPost
+
+  });
+
+  setPosts([res.data, ...posts]);
+
+  setNewPost("");
+
+ }
+ catch (err) {
+
+  console.error("Post failed", err);
+
+ }
+
+};
+    const toggleLike = async (id) => {
+
+ try {
+
+  const res = await axios.put(`http://localhost:5000/api/tips/${id}/like`);
+
+  setPosts(posts.map(post =>
+
+   post._id === id ? res.data : post
+
+  ));
+
+ }
+ catch (err) {
+
+  console.error("Like failed", err);
+
+ }
+
+};
 
     return (
         <div className="space-y-8 animate-fadeIn pb-20">
@@ -1016,7 +1131,75 @@ const FeedSection = ({ t, isDark, user }) => {
                         <div className={`p-6 rounded-3xl border flex flex-col h-[600px] ${t.card} ${isDark ? 'border-white/10' : 'border-slate-100'}`}>
                             <div className="mb-6"><h3 className={`font-bold mb-1 flex items-center gap-2 ${t.text}`}><MessageSquare size={18} className="text-green-500" /> Community Insights</h3><p className={`text-xs ${t.textSec}`}>Share tips with {user.course} peers</p></div>
                             <div className="flex gap-2 mb-6"><input value={newPost} onChange={(e) => setNewPost(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handlePost()} placeholder="Type your insight..." className={`flex-1 bg-transparent border rounded-xl px-4 py-3 text-sm outline-none transition-all ${isDark ? 'border-white/10 focus:border-indigo-500 text-white' : 'border-slate-200 focus:border-indigo-500 text-slate-800'}`} /><button onClick={handlePost} className={`p-3 rounded-xl shadow-md transition-transform active:scale-95 ${t.primary}`} disabled={!newPost.trim()}><Send size={18} /></button></div>
-                            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">{posts.length === 0 ? (<div className="h-full flex flex-col items-center justify-center opacity-50 text-center"><MessageSquare size={40} className={`mb-2 ${t.textSec}`} /><p className={`text-sm font-bold ${t.text}`}>No insights yet.</p></div>) : (posts.map(post => (<div key={post.id} className={`p-4 rounded-2xl border transition-all hover:shadow-sm ${isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'}`}><div className="flex justify-between items-start mb-3"><div className="flex items-center gap-3"><div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm bg-gradient-to-br from-purple-500 to-indigo-500`}>{post.author[0].toUpperCase()}</div><div><p className={`text-sm font-bold ${t.text}`}>{post.author}</p><p className={`text-[10px] font-medium uppercase tracking-wider opacity-60 ${t.textSec}`}>{post.role}</p></div></div></div><p className={`text-sm mb-4 leading-relaxed ${t.textSec}`}>{post.content}</p><button onClick={() => toggleLike(post.id)} className={`flex items-center gap-1.5 text-xs font-bold transition-colors p-1 rounded-md ${post.liked ? 'text-red-500 bg-red-50 dark:bg-red-500/10' : 'text-slate-400 hover:text-slate-500 hover:bg-slate-100 dark:hover:bg-white/5'}`}><Heart size={16} fill={post.liked ? "currentColor" : "none"} /> <span>{post.likes > 0 ? post.likes : 'Like'}</span></button></div>)))}</div>
+                            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+
+ {posts.length === 0 ? (
+
+  <div className="h-full flex flex-col items-center justify-center opacity-50 text-center">
+
+   <MessageSquare size={40} className={`mb-2 ${t.textSec}`} />
+
+   <p className={`text-sm font-bold ${t.text}`}>No insights yet.</p>
+
+  </div>
+
+ ) : (
+
+  posts.map(post => (
+
+   <div
+    key={post._id}
+    className={`p-4 rounded-2xl border transition-all hover:shadow-sm ${
+     isDark ? 'bg-white/5 border-white/5' : 'bg-slate-50 border-slate-100'
+    }`}
+   >
+
+    <div className="flex justify-between items-start mb-3">
+
+     <div className="flex items-center gap-3">
+
+      <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold text-white shadow-sm bg-gradient-to-br from-purple-500 to-indigo-500">
+
+       {post.author?.[0]?.toUpperCase()}
+
+      </div>
+
+      <div>
+
+       <p className={`text-sm font-bold ${t.text}`}>{post.author}</p>
+
+       <p className={`text-[10px] font-medium uppercase tracking-wider opacity-60 ${t.textSec}`}>
+        {post.course}
+       </p>
+
+      </div>
+
+     </div>
+
+    </div>
+
+    <p className={`text-sm mb-4 leading-relaxed ${t.textSec}`}>
+     {post.content}
+    </p>
+
+    <button
+     onClick={() => toggleLike(post._id)}
+     className="flex items-center gap-1.5 text-xs font-bold transition-colors p-1 rounded-md text-slate-400 hover:text-red-500"
+    >
+
+     <Heart size={16} />
+
+     <span>{post.likes > 0 ? post.likes : "Like"}</span>
+
+    </button>
+
+   </div>
+
+  ))
+
+ )}
+
+</div>
                         </div>
                     </div>
                 </div>
@@ -1413,15 +1596,25 @@ Generate JSON:
     };
 
 
-    // =========================
+// =========================
     // ATS Scan
     // =========================
 
-const handleATSScan = async () => {
+    const handleATSScan = async () => {
         setIsScanning(true);
         try {
-            const prompt = `Act as ATS Scanner. Analyze this JSON: ${JSON.stringify(resumeData)}. Return JSON: { "score": 88, "missingKeywords": ["AWS"], "improvements": ["Use metrics"] }`;
-            const res = await axios.post('http://localhost:5000/api/ai-chat', { prompt, systemPrompt: "JSON ATS Scanner" });
+            // FIX: Tweaked the prompt to explicitly force a dynamically calculated score
+            const prompt = `Act as an expert ATS Scanner. Evaluate the following resume JSON out of 100 based on industry standards, action verbs, and completeness.
+            Return STRICTLY a JSON object in this exact format, replacing the examples with your dynamic calculated analysis: 
+            { "score": <calculated_integer_between_0_and_100>, "missingKeywords": ["skill1", "skill2"], "improvements": ["tip1", "tip2"] }. 
+            
+            Resume JSON: ${JSON.stringify(resumeData)}`;
+            
+            const res = await axios.post('http://localhost:5000/api/ai-chat', { 
+                prompt, 
+                systemPrompt: "You are a JSON ATS Scanner. Output ONLY valid JSON." 
+            });
+            
             const jsonMatch = res.data.reply.match(/\{[\s\S]*\}/);
             const data = JSON.parse(jsonMatch ? jsonMatch[0] : res.data.reply);
             
