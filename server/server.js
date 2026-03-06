@@ -460,17 +460,47 @@ app.delete('/api/user/:id', async (req, res) => {
 // Add/Update Semester Marks
 app.post('/api/add-marks', async (req, res) => {
     try {
+        console.log("📥 RECEIVED DATA FROM FRONTEND:", req.body); // Check what arrived
+        
         const { userId, semester, subjects } = req.body;
-        const totalMarks = subjects.reduce((acc, sub) => acc + Number(sub.mark), 0);
+        
+        if (!userId) {
+            console.log("❌ ERROR: userId is missing!");
+            return res.status(400).json({ error: "userId is missing from the request" });
+        }
+
+        // Calculate GPA safely
+        const totalMarks = subjects.reduce((acc, sub) => acc + Number(sub.mark || 0), 0);
         const gpa = subjects.length > 0 ? parseFloat(((totalMarks / subjects.length) / 10).toFixed(2)) : 0;
+        
+        // Find user
         const user = await User.findById(userId);
-        if (!user) return res.status(404).json({ error: "User not found" });
-        user.academicHistory = user.academicHistory.filter(h => h.semester != semester);
-        user.academicHistory.push({ semester, subjects, gpa });
+        if (!user) {
+            console.log("❌ ERROR: User not found in DB!");
+            return res.status(404).json({ error: "User not found" });
+        }
+        
+        // Ensure semester is a number to match your schema
+        const semNum = Number(semester);
+
+        // Update history safely
+        user.academicHistory = (user.academicHistory || []).filter(h => h.semester !== semNum);
+        user.academicHistory.push({ semester: semNum, subjects, gpa });
         user.academicHistory.sort((a, b) => a.semester - b.semester);
+        
+        // Save to DB
         await user.save();
-        res.json(user.select('-password'));
-    } catch (e) { res.status(500).json({ error: "Failed to save marks" }); }
+        console.log("✅ MARKS SAVED SUCCESSFULLY!");
+        
+        // Safely remove password before sending back to the frontend
+        user.password = undefined;
+        res.json(user);
+
+    } catch (e) { 
+        console.error("🔥 CRASH IN ADD-MARKS:", e); // THIS WILL TELL US THE EXACT BUG
+        // Send the real error message to the frontend popup
+        res.status(500).json({ error: e.message || "Failed to save marks on the server" }); 
+    }
 });
 
 // =========================================
